@@ -128,6 +128,37 @@ class KickCatCliTests(unittest.TestCase):
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["mode"], "deploy")
 
+    def test_cli_init_uses_template_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "kickcat-running.json"
+            template_file = Path(tmp) / "kickcat.json"
+            template_payload = {
+                "version": 2,
+                "pet": {
+                    "name": "TemplateCat",
+                    "hunger": 44,
+                    "happiness": 65,
+                    "boredom": 45,
+                },
+            }
+            template_file.write_text(json.dumps(template_payload), encoding="utf-8")
+
+            subprocess.check_output(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "init",
+                    "--state-file",
+                    str(state_file),
+                    "--template-file",
+                    str(template_file),
+                ],
+                text=True,
+            )
+            saved = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(saved["pet"]["name"], "TemplateCat")
+            self.assertEqual(saved["pet"]["hunger"], 44)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ venv/
 # Runtime artifacts
 logs/
 *.log
+data/kickcat-running.json
 
 # Local environment files
 .env

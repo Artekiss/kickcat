@@ -1,4 +1,4 @@
-# KickCat v1.1
+# KickCat v1.1b
 
 KickCat is a minimal virtual pet reminder skill for OpenClaw.
 
@@ -11,14 +11,15 @@ It keeps one tight loop:
 
 Version semantics:
 
-- product/release version: `v1.1`
-- state schema version in `kickcat.json`: `version = 2` (schema migration marker)
+- product/release version: `v1.1b`
+- state schema version in runtime state: `version = 2` (schema migration marker)
 
 ## Project layout
 
 - `skills/kickcat/kickcat.py`: local script (`init`, `tick`, `apply`, `summary`, `cat`)
 - `skills/kickcat/SKILL.md`: skill contract and routing guidance
-- `data/kickcat.json`: only state source for KickCat
+- `data/kickcat.json`: tracked template state
+- `data/kickcat-running.json`: runtime state (gitignored)
 - `HEARTBEAT.md`: tiny heartbeat checklist
 - `tests/`: unit and CLI tests
 
@@ -31,6 +32,12 @@ python3 skills/kickcat/kickcat.py summary
 python3 skills/kickcat/kickcat.py cat --text "feed cat and remind me to write report"
 python3 skills/kickcat/kickcat.py apply --payload '{"ops":[{"type":"touch_interaction"}]}'
 ```
+
+`init` behavior:
+
+- if `data/kickcat-running.json` exists, keep and normalize it
+- if missing, create it from `data/kickcat.json` template
+- override paths with `--state-file` and `--template-file`
 
 ## Deploy and debug modes
 

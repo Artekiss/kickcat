@@ -65,6 +65,21 @@ class KickCatUnitTests(unittest.TestCase):
         state = self._read_state()
         self.assertEqual(len(state["memory"]["task_related"]), 1)
 
+    def test_init_creates_from_template_when_state_missing(self):
+        template_path = Path(self.tmp.name) / "kickcat.template.json"
+        template_state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
+        template_state["pet"]["name"] = "TemplateCat"
+        template_state["pet"]["hunger"] = 52
+        template_path.write_text(
+            json.dumps(template_state, ensure_ascii=False), encoding="utf-8"
+        )
+
+        out = kickcat.init_state(self.state_path, template_path=template_path)
+        self.assertTrue(out["created"])
+        state = self._read_state()
+        self.assertEqual(state["pet"]["name"], "TemplateCat")
+        self.assertEqual(state["pet"]["hunger"], 52)
+
     def test_tick_progression_with_recent_interaction_and_penalties(self):
         now = datetime(2026, 2, 28, 10, 30, tzinfo=timezone.utc)
         state = kickcat.deepcopy(kickcat.DEFAULT_STATE)

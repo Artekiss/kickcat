@@ -1,3 +1,8 @@
+---
+name: cat
+user-invocable: true
+---
+
 # KickCat Skill
 
 ## 名称与用途
@@ -13,7 +18,7 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 - 顺手记录提醒事项（task_capture）
 - 表达心情（mood_capture）
 - heartbeat 轮询状态与候选动作
-- 显式命令 `/cat <text>`（强制进入 KickCat 专项互动）
+- 显式命令 `/cat <自然语言输入>`（强制进入 KickCat 专项互动）
 
 ## 结构化解析规范
 
@@ -63,7 +68,7 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 
 - Heartbeat 配置建议：`every: "10m"`，内测期 `target: "none"`，稳定后切到 `target: "last"`
 - 心跳主流程：`tick -> summary -> HEARTBEAT_OK/单条短消息`
-- `/cat` 路由建议：收到 `/cat <text>` 时直接调用 `kickcat.py cat --text "..."`
+- `/cat` 路由建议：收到 `/cat <自然语言输入>` 后，先做意图结构化解析，再映射 reducer ops 并调用 `apply`
 - 脚本运行模式：
   - `deploy`（默认）：面向生产，错误输出最小化
   - `debug`：即使异常也保底输出 JSON，并写入 debug 日志

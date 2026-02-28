@@ -1,4 +1,4 @@
-# KickCat v1.1 TODOs
+# KickCat v1.1b TODOs
 
 > 注：本文档包含 v1 到 v1.1+ 的历史里程碑；代码中的 `version` 字段指状态 schema 版本。
 

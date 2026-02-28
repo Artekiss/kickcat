@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_STATE_PATH = ROOT_DIR / "data" / "kickcat.json"
+DEFAULT_TEMPLATE_STATE_PATH = ROOT_DIR / "data" / "kickcat.json"
+DEFAULT_STATE_PATH = ROOT_DIR / "data" / "kickcat-running.json"
 
 TICK_MINUTES = 10
 FEED_COOLDOWN_MINUTES = 5
@@ -185,7 +186,16 @@ def save_state(state_path, state):
         f.write("\n")
 
 
-def init_state(state_path):
+def _load_template_state(template_path):
+    path = Path(template_path)
+    if not path.exists():
+        return deepcopy(DEFAULT_STATE)
+    with path.open("r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    return ensure_state_schema(loaded)
+
+
+def init_state(state_path, template_path=None):
     path = Path(state_path)
     if path.exists():
         state = load_state(path)
@@ -196,7 +206,7 @@ def init_state(state_path):
             "state_path": str(path),
             "pet": state["pet"],
         }
-    state = deepcopy(DEFAULT_STATE)
+    state = _load_template_state(template_path or DEFAULT_TEMPLATE_STATE_PATH)
     save_state(path, state)
     return {"ok": True, "created": True, "state_path": str(path), "pet": state["pet"]}
 
@@ -958,7 +968,7 @@ def error_payload(exc, args, mode):
 
 def execute_command(args):
     if args.command == "init":
-        return init_state(args.state_file)
+        return init_state(args.state_file, template_path=args.template_file)
     if args.command == "tick":
         return run_tick(args.state_file)
     if args.command == "apply":
@@ -975,12 +985,14 @@ def _add_runtime_flags(parser):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="KickCat v1.1 local state script")
+    parser = argparse.ArgumentParser(description="KickCat v1.1b local state script")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for cmd in ("init", "tick", "summary"):
         p = subparsers.add_parser(cmd)
         p.add_argument("--state-file", default=str(DEFAULT_STATE_PATH))
+        if cmd == "init":
+            p.add_argument("--template-file", default=str(DEFAULT_TEMPLATE_STATE_PATH))
         _add_runtime_flags(p)
 
     apply_parser = subparsers.add_parser("apply")
