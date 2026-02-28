@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "pet": {
+    "name": "KickCat",
+    "hunger": 35,
+    "happiness": 65,
+    "boredom": 45
+  },
+  "timing": {
+    "last_tick_at": null,
+    "last_feed_at": null,
+    "last_interaction_at": null,
+    "last_random_ping_at": null
+  },
+  "tasks": [],
+  "moods": [],
+  "meta": {
+    "last_action_candidate": "none",
+    "last_action_reason": null,
+    "last_message_hash": null
+  }
+}
