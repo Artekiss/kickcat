@@ -1,6 +1,6 @@
-# KickCat v1.1b TODOs
+# KickCat v1.2 TODOs
 
-> 注：本文档包含 v1 到 v1.1+ 的历史里程碑；代码中的 `version` 字段指状态 schema 版本。
+> 注：本文档包含 v1 到 v1.2+ 的历史里程碑；代码中的 `version` 字段指状态 schema 版本。
 
 > 目标：先打通最小可运行闭环，再补齐测试与交付说明。
 

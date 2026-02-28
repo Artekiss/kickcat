@@ -1,4 +1,4 @@
-# KickCat v1.1b
+# KickCat v1.2
 
 KickCat is a minimal virtual pet reminder skill for OpenClaw.
 
@@ -11,7 +11,7 @@ It keeps one tight loop:
 
 Version semantics:
 
-- product/release version: `v1.1b`
+- product/release version: `v1.2`
 - state schema version in runtime state: `version = 2` (schema migration marker)
 
 ## Project layout
@@ -77,6 +77,12 @@ Memory limits (UTF-8 bytes):
 - task-related bucket: `<= 8KB`
 - non-task bucket: `<= 4KB`
 - total compact trigger threshold: `>= 32KB`
+
+## Reply and activity policy
+
+- strict debug gating: only explicit `/cat DEBUG ...` may include numeric status/debug details
+- default `/cat` replies stay non-numeric and user-facing
+- `tick` may emit `candidate=cat_activity` with `activity_hint` when no task/urgent reminder is due
 
 ## Lightweight learning
 

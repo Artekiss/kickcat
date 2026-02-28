@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import traceback
 from copy import deepcopy
@@ -19,6 +20,7 @@ TICK_MINUTES = 10
 FEED_COOLDOWN_MINUTES = 5
 TASK_REMIND_COOLDOWN_MINUTES = 30
 RANDOM_PING_COOLDOWN_MINUTES = 60
+ACTIVITY_HINT_COOLDOWN_MINUTES = 45
 MAX_PET_DELTA = 30
 MEMORY_SYNC_INTERVAL_MINUTES = 180
 MEMORY_COMPACT_THRESHOLD_BYTES = 32 * 1024
@@ -46,6 +48,7 @@ DEFAULT_STATE = {
         "last_feed_at": None,
         "last_interaction_at": None,
         "last_random_ping_at": None,
+        "last_activity_hint_at": None,
     },
     "tasks": [],
     "moods": [],
@@ -287,6 +290,57 @@ def _pick_random_ping(state, current_dt):
     return "gentle_checkin", "state_checkin"
 
 
+def _activity_pool(state):
+    hunger = state["pet"]["hunger"]
+    boredom = state["pet"]["boredom"]
+    happiness = state["pet"]["happiness"]
+
+    if boredom >= 55:
+        return [
+            "I chased a yarn ball around the room.",
+            "I found a paper bag and turned it into a tunnel adventure.",
+            "I practiced stealth steps and pounced on a toy mouse.",
+        ]
+    if hunger >= 45:
+        return [
+            "I sniffed around for snacks and took a small water break.",
+            "I patrolled the kitchen and checked my water bowl.",
+            "I followed food smells, then stretched near the bowl.",
+        ]
+    if happiness >= 70:
+        return [
+            "I made a new cat friend and we played tag.",
+            "I took a sunny nap after a friendly head bump session.",
+            "I watched birds by the window and chirped quietly.",
+        ]
+    return [
+        "I groomed my fur and had a calm rest.",
+        "I did a little paw exercise and drank some water.",
+        "I explored a corner, then curled up for a short nap.",
+    ]
+
+
+def _pick_free_activity_hint(state, current_dt):
+    last_hint = state["timing"].get("last_activity_hint_at")
+    if last_hint is not None:
+        minutes = _minutes_since(current_dt, last_hint)
+        if minutes is not None and minutes < ACTIVITY_HINT_COOLDOWN_MINUTES:
+            return None
+
+    hunger = state["pet"]["hunger"]
+    boredom = state["pet"]["boredom"]
+    if hunger >= 75 or boredom >= 70:
+        return None
+
+    pool = _activity_pool(state)
+    if not pool:
+        return None
+
+    chooser = int(current_dt.timestamp() // (TICK_MINUTES * 60))
+    chooser += hunger + boredom + state["pet"]["happiness"]
+    return pool[chooser % len(pool)]
+
+
 def choose_action_candidate(state, current_dt):
     task_idx, task, task_reason = _pick_task_reminder(state, current_dt)
     if task is not None:
@@ -297,6 +351,11 @@ def choose_action_candidate(state, current_dt):
     if action != "none":
         state["timing"]["last_random_ping_at"] = to_iso_utc(current_dt)
         return action, reason, None
+
+    activity_hint = _pick_free_activity_hint(state, current_dt)
+    if activity_hint is not None:
+        state["timing"]["last_activity_hint_at"] = to_iso_utc(current_dt)
+        return "cat_activity", "free_activity", {"activity_hint": activity_hint}
 
     return "none", "no_action_needed", None
 
@@ -384,7 +443,7 @@ def run_tick(state_path, now_dt=None):
             state["pet"]["happiness"] -= 2
         clamp_pet(state)
 
-    candidate, reason, task = choose_action_candidate(state, current_dt)
+    candidate, reason, action_payload = choose_action_candidate(state, current_dt)
 
     memory_action = choose_memory_action_candidate(state, current_dt)
 
@@ -402,8 +461,10 @@ def run_tick(state_path, now_dt=None):
         "reason": reason,
         "memory_action": memory_action,
     }
-    if task is not None:
-        out["task_hint"] = task.get("title")
+    if candidate == "task_reminder" and action_payload is not None:
+        out["task_hint"] = action_payload.get("title")
+    if candidate == "cat_activity" and action_payload is not None:
+        out["activity_hint"] = action_payload.get("activity_hint")
     return out
 
 
@@ -811,6 +872,38 @@ def build_summary(state_path):
     }
 
 
+def _pet_level(value):
+    if value >= 75:
+        return "high"
+    if value >= 40:
+        return "medium"
+    return "low"
+
+
+def _public_summary(summary):
+    pet = summary.get("pet", {})
+    return {
+        "pet_state": {
+            "hunger": _pet_level(int(pet.get("hunger", 0))),
+            "happiness": _pet_level(int(pet.get("happiness", 0))),
+            "boredom": _pet_level(int(pet.get("boredom", 0))),
+        },
+        "candidate": summary.get("candidate", "none"),
+        "task_hint": summary.get("task_hint"),
+        "mood_hint": summary.get("mood_hint"),
+        "memory_state": "stable"
+        if summary.get("memory", {}).get("last_sync_at")
+        else "idle",
+    }
+
+
+def _is_debug_cat_request(text):
+    content = (text or "").strip()
+    if content.lower().startswith("/cat"):
+        content = content[4:].strip()
+    return re.match(r"^debug(\s|$)", content, re.IGNORECASE) is not None
+
+
 def _extract_task_title(text):
     lower = text.lower()
     markers = ["remind me to", "提醒我", "记得"]
@@ -893,6 +986,7 @@ def build_cat_ops(text):
 
 def run_cat_command(state_path, text, now_dt=None):
     content = (text or "").strip()
+    debug_mode = _is_debug_cat_request(content)
     if not content:
         summary = build_summary(state_path)
         return {
@@ -900,7 +994,8 @@ def run_cat_command(state_path, text, now_dt=None):
             "mode": "cat",
             "intents": ["chat"],
             "message": "KickCat is here. Tell me to chat, feed, remind, or share mood.",
-            "summary": summary,
+            "summary": _public_summary(summary),
+            "debug_mode": False,
         }
 
     mapping = build_cat_ops(content)
@@ -910,13 +1005,17 @@ def run_cat_command(state_path, text, now_dt=None):
     }
     apply_result = apply_ops(state_path, payload, now_dt=now_dt)
     summary = build_summary(state_path)
-    return {
+    out = {
         "ok": True,
         "mode": "cat",
         "intents": mapping["intents"],
         "apply": apply_result,
-        "summary": summary,
+        "summary": _public_summary(summary),
+        "debug_mode": debug_mode,
     }
+    if debug_mode:
+        out["debug_summary"] = summary
+    return out
 
 
 def _load_payload(args):
@@ -985,7 +1084,7 @@ def _add_runtime_flags(parser):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="KickCat v1.1b local state script")
+    parser = argparse.ArgumentParser(description="KickCat v1.2 local state script")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for cmd in ("init", "tick", "summary"):

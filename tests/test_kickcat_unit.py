@@ -126,6 +126,26 @@ class KickCatUnitTests(unittest.TestCase):
         out = kickcat.run_tick(self.state_path, now_dt=now)
         self.assertEqual(out["candidate"], "none")
 
+    def test_tick_emits_cat_activity_hint_when_calm(self):
+        now = datetime(2026, 2, 28, 12, 0, tzinfo=timezone.utc)
+        state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
+        state["pet"].update({"hunger": 40, "boredom": 50, "happiness": 70})
+        self._write_state(state)
+
+        out = kickcat.run_tick(self.state_path, now_dt=now)
+        self.assertEqual(out["candidate"], "cat_activity")
+        self.assertIn("activity_hint", out)
+
+    def test_tick_cat_activity_hint_respects_cooldown(self):
+        now = datetime(2026, 2, 28, 12, 0, tzinfo=timezone.utc)
+        state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
+        state["pet"].update({"hunger": 40, "boredom": 50, "happiness": 70})
+        state["timing"]["last_activity_hint_at"] = iso(now - timedelta(minutes=10))
+        self._write_state(state)
+
+        out = kickcat.run_tick(self.state_path, now_dt=now)
+        self.assertEqual(out["candidate"], "none")
+
     def test_apply_pet_delta_validation_and_clamp(self):
         kickcat.init_state(self.state_path)
         payload = {"ops": [{"type": "pet_delta", "field": "hunger", "delta": 200}]}
@@ -401,6 +421,23 @@ class KickCatUnitTests(unittest.TestCase):
         state = self._read_state()
         self.assertGreaterEqual(len(state["tasks"]), 1)
         self.assertGreaterEqual(len(state["moods"]), 1)
+
+    def test_cat_command_hides_numeric_summary_without_debug(self):
+        now = datetime(2026, 3, 1, 10, 5, tzinfo=timezone.utc)
+        kickcat.init_state(self.state_path)
+        out = kickcat.run_cat_command(self.state_path, "how are you", now_dt=now)
+        self.assertFalse(out["debug_mode"])
+        self.assertIn("pet_state", out["summary"])
+        self.assertNotIn("pet", out["summary"])
+        self.assertNotIn("debug_summary", out)
+
+    def test_cat_command_exposes_debug_summary_for_debug_prefix(self):
+        now = datetime(2026, 3, 1, 10, 10, tzinfo=timezone.utc)
+        kickcat.init_state(self.state_path)
+        out = kickcat.run_cat_command(self.state_path, "DEBUG status", now_dt=now)
+        self.assertTrue(out["debug_mode"])
+        self.assertIn("debug_summary", out)
+        self.assertIn("pet", out["debug_summary"])
 
 
 if __name__ == "__main__":

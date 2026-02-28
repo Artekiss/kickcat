@@ -77,7 +77,7 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
   - `python3 skills/kickcat/kickcat.py apply --payload ... --mode debug --debug-log-file logs/kickcat-debug.jsonl`
   - `python3 skills/kickcat/kickcat.py cat --text "feed cat and remind me to finish report"`
 
-## 主记忆同步（v1.1）
+## 主记忆同步（v1.2）
 
 - 每 3 小时由 tick 产生 `request_memory_sync` 候选
 - KickCat 脚本不直接读取或规范化主记忆
@@ -85,14 +85,14 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 - 无关内容由 LLM 判断并跳过，同步游标建议使用 `updated_at + id`
 - 同步写入分桶：`task_related_items` 与 `non_task_related_items`
 
-## 内部记忆 compact（v1.1）
+## 内部记忆 compact（v1.2）
 
 - 当地时间每日 03:00 后，或内部记忆达到 32KB 时，tick 产生 `request_memory_compact`
 - 由 LLM 返回语义压缩结果，再调用 `apply` 的 `memory_compact_replace`
 - 大小上限（UTF-8 字节）：`task_related <= 8KB`，`non_task_related <= 4KB`
 - KickCat 仅做结构校验、大小约束与落盘
 
-## 轻学习机制（v1.1+）
+## 轻学习机制（v1.2+）
 
 - 允许 LLM 通过 `preference_upsert` 更新轻量偏好（如语气、互动密度）
 - 仅白名单字段可写入，避免过度预定义和无边界膨胀
@@ -109,3 +109,6 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 - 一次只说一小段
 - 提醒优先于卖萌
 - 用户低落时改用温和语气，减少打扰
+- 严格调试门控：仅当用户输入明确为 `/cat DEBUG ...`（不区分大小写）时，允许输出具体状态数值或调试信息
+- 若未命中 `/cat DEBUG ...`，禁止输出 `hunger/happiness/boredom` 数值、memory bytes、ops 计数、阈值、内部 reason code、trace/debug 字段
+- 非紧急状态下可输出一条猫咪自由活动提示（如玩毛线球、喝水、找朋友玩、找食物），但当存在任务提醒或强提醒时必须让位

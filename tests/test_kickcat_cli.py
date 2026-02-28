@@ -83,6 +83,31 @@ class KickCatCliTests(unittest.TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["mode"], "cat")
             self.assertIn("feed", payload["intents"])
+            self.assertFalse(payload["debug_mode"])
+            self.assertIn("pet_state", payload["summary"])
+
+    def test_cli_cat_command_debug_prefix_exposes_debug_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "kickcat.json"
+            subprocess.check_output(
+                ["python3", str(SCRIPT), "init", "--state-file", str(state_file)],
+                text=True,
+            )
+            out = subprocess.check_output(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "cat",
+                    "--state-file",
+                    str(state_file),
+                    "--text",
+                    "DEBUG show status",
+                ],
+                text=True,
+            )
+            payload = json.loads(out)
+            self.assertTrue(payload["debug_mode"])
+            self.assertIn("debug_summary", payload)
 
     def test_cli_debug_mode_returns_json_on_error_and_writes_log(self):
         with tempfile.TemporaryDirectory() as tmp:
