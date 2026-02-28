@@ -16,11 +16,27 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE_STATE_PATH = ROOT_DIR / "data" / "kickcat.json"
 DEFAULT_STATE_PATH = ROOT_DIR / "data" / "kickcat-running.json"
 
-TICK_MINUTES = 10
+TICK_MINUTES = 20
 FEED_COOLDOWN_MINUTES = 5
 TASK_REMIND_COOLDOWN_MINUTES = 30
 RANDOM_PING_COOLDOWN_MINUTES = 60
-ACTIVITY_HINT_COOLDOWN_MINUTES = 45
+ACTIVITY_COOLDOWN_MINUTES = 45
+ACTIVITY_PROGRESS_INTERVAL_MINUTES = 20
+ACTIVITY_DEFAULT_DURATION_MINUTES = 20
+ACTIVITY_MIN_DURATION_MINUTES = 10
+ACTIVITY_MAX_DURATION_MINUTES = 60
+ACTIVITY_KIND_WHITELIST = (
+    "play",
+    "hunt",
+    "social",
+    "rest",
+    "groom",
+    "water",
+    "litter",
+    "explore",
+)
+ACTIVITY_INTENSITY_LEVELS = ("low", "mid", "high")
+ACTIVITY_INTENSITY_FACTORS = {"low": 0.85, "mid": 1.0, "high": 1.2}
 MAX_PET_DELTA = 30
 MEMORY_SYNC_INTERVAL_MINUTES = 180
 MEMORY_COMPACT_THRESHOLD_BYTES = 32 * 1024
@@ -48,7 +64,6 @@ DEFAULT_STATE = {
         "last_feed_at": None,
         "last_interaction_at": None,
         "last_random_ping_at": None,
-        "last_activity_hint_at": None,
     },
     "tasks": [],
     "moods": [],
@@ -56,6 +71,21 @@ DEFAULT_STATE = {
         "last_action_candidate": "none",
         "last_action_reason": None,
         "last_message_hash": None,
+    },
+    "activity": {
+        "phase": "idle",
+        "kind": None,
+        "intensity_level": "mid",
+        "started_at": None,
+        "ends_at": None,
+        "cooldown_until": None,
+        "last_progress_at": None,
+        "plan": {
+            "kind": "play",
+            "intensity_level": "mid",
+            "duration_minutes": ACTIVITY_DEFAULT_DURATION_MINUTES,
+            "updated_at": None,
+        },
     },
     "memory": {
         "task_related": [],
@@ -111,6 +141,37 @@ def _default_memory_state():
     return deepcopy(DEFAULT_STATE["memory"])
 
 
+def _default_activity_state():
+    return deepcopy(DEFAULT_STATE["activity"])
+
+
+def _normalize_activity_kind(kind):
+    return kind if kind in ACTIVITY_KIND_WHITELIST else "play"
+
+
+def _normalize_activity_intensity(level):
+    return level if level in ACTIVITY_INTENSITY_LEVELS else "mid"
+
+
+def _normalize_activity_duration(minutes):
+    if not isinstance(minutes, (int, float)):
+        return ACTIVITY_DEFAULT_DURATION_MINUTES
+    return int(
+        clamp(
+            int(minutes), ACTIVITY_MIN_DURATION_MINUTES, ACTIVITY_MAX_DURATION_MINUTES
+        )
+    )
+
+
+def _normalize_iso_or_none(raw_value, field_name):
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, str):
+        return None
+    parse_iso_utc(raw_value, field_name)
+    return raw_value
+
+
 def ensure_state_schema(state):
     merged = deepcopy(DEFAULT_STATE)
     merged.update(state)
@@ -118,6 +179,43 @@ def ensure_state_schema(state):
     merged["pet"] = {**DEFAULT_STATE["pet"], **state.get("pet", {})}
     merged["timing"] = {**DEFAULT_STATE["timing"], **state.get("timing", {})}
     merged["meta"] = {**DEFAULT_STATE["meta"], **state.get("meta", {})}
+    merged["activity"] = _default_activity_state()
+    merged["activity"].update(state.get("activity", {}))
+    merged["activity"]["phase"] = (
+        merged["activity"].get("phase")
+        if merged["activity"].get("phase") in ("idle", "active", "cooldown")
+        else "idle"
+    )
+    raw_kind = merged["activity"].get("kind")
+    merged["activity"]["kind"] = (
+        raw_kind if raw_kind in ACTIVITY_KIND_WHITELIST else None
+    )
+    merged["activity"]["intensity_level"] = _normalize_activity_intensity(
+        merged["activity"].get("intensity_level")
+    )
+    for field in ("started_at", "ends_at", "cooldown_until", "last_progress_at"):
+        merged["activity"][field] = _normalize_iso_or_none(
+            merged["activity"].get(field), f"activity.{field}"
+        )
+    if not isinstance(merged["activity"].get("plan"), dict):
+        merged["activity"]["plan"] = _default_activity_state()["plan"]
+    merged["activity"]["plan"] = {
+        **_default_activity_state()["plan"],
+        **merged["activity"].get("plan", {}),
+    }
+    merged["activity"]["plan"]["kind"] = _normalize_activity_kind(
+        merged["activity"]["plan"].get("kind")
+    )
+    merged["activity"]["plan"]["intensity_level"] = _normalize_activity_intensity(
+        merged["activity"]["plan"].get("intensity_level")
+    )
+    merged["activity"]["plan"]["duration_minutes"] = _normalize_activity_duration(
+        merged["activity"]["plan"].get("duration_minutes")
+    )
+    merged["activity"]["plan"]["updated_at"] = _normalize_iso_or_none(
+        merged["activity"]["plan"].get("updated_at"), "activity.plan.updated_at"
+    )
+
     merged["memory"] = _default_memory_state()
     merged["memory"].update(state.get("memory", {}))
     if isinstance(state.get("memory", {}).get("items"), list):
@@ -290,72 +388,211 @@ def _pick_random_ping(state, current_dt):
     return "gentle_checkin", "state_checkin"
 
 
-def _activity_pool(state):
-    hunger = state["pet"]["hunger"]
-    boredom = state["pet"]["boredom"]
-    happiness = state["pet"]["happiness"]
+def _activity_hint_pool(kind):
+    pools = {
+        "play": [
+            "I rolled a yarn ball and practiced fast turns.",
+            "I pounced on a toy mouse and zoomed around.",
+            "I turned a paper bag into a tiny arena.",
+        ],
+        "hunt": [
+            "I tracked tiny sounds and practiced hunter steps.",
+            "I patrolled corners and followed snack scents.",
+            "I did silent paw drills like a mini predator.",
+        ],
+        "social": [
+            "I met a cat friend and we played chase.",
+            "I shared a calm head bump and short walk.",
+            "I greeted a buddy and swapped curious sniffs.",
+        ],
+        "rest": [
+            "I found a warm spot and took a short nap.",
+            "I stretched, breathed slowly, and relaxed.",
+            "I curled up and rested in the sun.",
+        ],
+        "groom": [
+            "I groomed my fur and fixed my whiskers.",
+            "I cleaned my paws and tidied my coat.",
+            "I had a full fur-care session.",
+        ],
+        "water": [
+            "I took a water break and cooled down.",
+            "I checked my bowl and had a few sips.",
+            "I paused for hydration and a tiny stretch.",
+        ],
+        "litter": [
+            "I did a quick litter-box break and moved on.",
+            "I handled cat business and covered it neatly.",
+            "I took a short hygiene stop.",
+        ],
+        "explore": [
+            "I explored a new corner and mapped the route.",
+            "I inspected shelves and tracked window sounds.",
+            "I surveyed the area like a tiny ranger.",
+        ],
+    }
+    return pools.get(kind, pools["play"])
 
-    if boredom >= 55:
-        return [
-            "I chased a yarn ball around the room.",
-            "I found a paper bag and turned it into a tunnel adventure.",
-            "I practiced stealth steps and pounced on a toy mouse.",
-        ]
-    if hunger >= 45:
-        return [
-            "I sniffed around for snacks and took a small water break.",
-            "I patrolled the kitchen and checked my water bowl.",
-            "I followed food smells, then stretched near the bowl.",
-        ]
-    if happiness >= 70:
-        return [
-            "I made a new cat friend and we played tag.",
-            "I took a sunny nap after a friendly head bump session.",
-            "I watched birds by the window and chirped quietly.",
-        ]
-    return [
-        "I groomed my fur and had a calm rest.",
-        "I did a little paw exercise and drank some water.",
-        "I explored a corner, then curled up for a short nap.",
-    ]
 
-
-def _pick_free_activity_hint(state, current_dt):
-    last_hint = state["timing"].get("last_activity_hint_at")
-    if last_hint is not None:
-        minutes = _minutes_since(current_dt, last_hint)
-        if minutes is not None and minutes < ACTIVITY_HINT_COOLDOWN_MINUTES:
-            return None
-
-    hunger = state["pet"]["hunger"]
-    boredom = state["pet"]["boredom"]
-    if hunger >= 75 or boredom >= 70:
-        return None
-
-    pool = _activity_pool(state)
-    if not pool:
-        return None
-
+def _pick_activity_hint(kind, current_dt, marker=""):
+    pool = _activity_hint_pool(kind)
     chooser = int(current_dt.timestamp() // (TICK_MINUTES * 60))
-    chooser += hunger + boredom + state["pet"]["happiness"]
+    chooser += sum(ord(ch) for ch in f"{kind}:{marker}")
     return pool[chooser % len(pool)]
 
 
+def _activity_payload(activity_state, current_dt, marker):
+    kind = _normalize_activity_kind(activity_state.get("kind"))
+    level = _normalize_activity_intensity(activity_state.get("intensity_level"))
+    return {
+        "activity_kind": kind,
+        "activity_intensity_level": level,
+        "activity_hint": _pick_activity_hint(kind, current_dt, marker=marker),
+    }
+
+
+def _activity_drift_factor(activity_state):
+    if activity_state.get("phase") != "active":
+        return 1.0
+    level = _normalize_activity_intensity(activity_state.get("intensity_level"))
+    return ACTIVITY_INTENSITY_FACTORS[level]
+
+
+def _apply_activity_effects(state, drift_factor):
+    activity_state = state.get("activity", {})
+    if activity_state.get("phase") != "active":
+        return
+    kind = _normalize_activity_kind(activity_state.get("kind"))
+    effects = {
+        "play": {"hunger": 1, "boredom": -2, "happiness": 1},
+        "hunt": {"hunger": 2, "boredom": -2, "happiness": 0},
+        "social": {"hunger": 0, "boredom": -2, "happiness": 2},
+        "rest": {"hunger": -1, "boredom": -1, "happiness": 1},
+        "groom": {"hunger": 0, "boredom": -1, "happiness": 1},
+        "water": {"hunger": -1, "boredom": 0, "happiness": 0},
+        "litter": {"hunger": 0, "boredom": -1, "happiness": 0},
+        "explore": {"hunger": 1, "boredom": -1, "happiness": 1},
+    }
+    effect = effects.get(kind, effects["play"])
+    for field in ("hunger", "boredom", "happiness"):
+        delta = int(round(effect[field] * drift_factor))
+        state["pet"][field] += delta
+
+
+def _apply_pet_tick_step(state, recent_interaction):
+    activity_state = state.get("activity", {})
+    drift_factor = _activity_drift_factor(activity_state)
+
+    state["pet"]["hunger"] += int(round(2 * drift_factor))
+    state["pet"]["boredom"] += int(round(3 * drift_factor))
+    if recent_interaction:
+        state["pet"]["boredom"] -= int(round(2 * drift_factor))
+
+    _apply_activity_effects(state, drift_factor)
+
+    if state["pet"]["hunger"] >= 80:
+        state["pet"]["happiness"] -= 3
+    if state["pet"]["boredom"] >= 75:
+        state["pet"]["happiness"] -= 2
+    clamp_pet(state)
+
+
+def _activity_progress_due(activity_state, current_dt):
+    last_progress = parse_iso_utc(
+        activity_state.get("last_progress_at"), "activity.last_progress_at"
+    )
+    if last_progress is None:
+        return True
+    return (current_dt - last_progress) >= timedelta(
+        minutes=ACTIVITY_PROGRESS_INTERVAL_MINUTES
+    )
+
+
+def _start_activity(state, current_dt):
+    activity_state = state["activity"]
+    plan = activity_state.get("plan", {})
+    kind = _normalize_activity_kind(plan.get("kind"))
+    level = _normalize_activity_intensity(plan.get("intensity_level"))
+    duration = _normalize_activity_duration(plan.get("duration_minutes"))
+    activity_state["phase"] = "active"
+    activity_state["kind"] = kind
+    activity_state["intensity_level"] = level
+    activity_state["started_at"] = to_iso_utc(current_dt)
+    activity_state["ends_at"] = to_iso_utc(current_dt + timedelta(minutes=duration))
+    activity_state["cooldown_until"] = None
+    activity_state["last_progress_at"] = to_iso_utc(current_dt)
+    return _activity_payload(activity_state, current_dt, marker="start")
+
+
+def _end_activity(state, current_dt, reason):
+    activity_state = state["activity"]
+    payload = _activity_payload(activity_state, current_dt, marker=f"end:{reason}")
+    activity_state["phase"] = "cooldown"
+    activity_state["kind"] = None
+    activity_state["started_at"] = None
+    activity_state["ends_at"] = None
+    activity_state["cooldown_until"] = to_iso_utc(
+        current_dt + timedelta(minutes=ACTIVITY_COOLDOWN_MINUTES)
+    )
+    activity_state["last_progress_at"] = None
+    payload["activity_end_reason"] = reason
+    return payload
+
+
+def _release_activity_cooldown_if_due(state, current_dt):
+    activity_state = state["activity"]
+    if activity_state.get("phase") != "cooldown":
+        return
+    cooldown_until = parse_iso_utc(
+        activity_state.get("cooldown_until"), "activity.cooldown_until"
+    )
+    if cooldown_until is not None and current_dt < cooldown_until:
+        return
+    activity_state["phase"] = "idle"
+    activity_state["cooldown_until"] = None
+
+
+def _should_start_activity(state):
+    hunger = state["pet"]["hunger"]
+    boredom = state["pet"]["boredom"]
+    return hunger < 75 and boredom < 70
+
+
 def choose_action_candidate(state, current_dt):
+    _release_activity_cooldown_if_due(state, current_dt)
+
     task_idx, task, task_reason = _pick_task_reminder(state, current_dt)
     if task is not None:
         state["tasks"][task_idx]["last_reminded_at"] = to_iso_utc(current_dt)
+        if state["activity"].get("phase") == "active":
+            _end_activity(state, current_dt, reason="interrupted_by_task")
         return "task_reminder", f"task:{task_reason}", task
 
     action, reason = _pick_random_ping(state, current_dt)
     if action != "none":
+        if state["activity"].get("phase") == "active":
+            _end_activity(state, current_dt, reason="interrupted_by_pet_need")
         state["timing"]["last_random_ping_at"] = to_iso_utc(current_dt)
         return action, reason, None
 
-    activity_hint = _pick_free_activity_hint(state, current_dt)
-    if activity_hint is not None:
-        state["timing"]["last_activity_hint_at"] = to_iso_utc(current_dt)
-        return "cat_activity", "free_activity", {"activity_hint": activity_hint}
+    activity_state = state["activity"]
+    if activity_state.get("phase") == "active":
+        ends_at = parse_iso_utc(activity_state.get("ends_at"), "activity.ends_at")
+        if ends_at is None or current_dt >= ends_at:
+            payload = _end_activity(state, current_dt, reason="natural_end")
+            return "activity_end", "activity:natural_end", payload
+        if _activity_progress_due(activity_state, current_dt):
+            activity_state["last_progress_at"] = to_iso_utc(current_dt)
+            return (
+                "activity_progress",
+                "activity:active",
+                _activity_payload(activity_state, current_dt, marker="progress"),
+            )
+        return "none", "no_action_needed", None
+
+    if activity_state.get("phase") == "idle" and _should_start_activity(state):
+        payload = _start_activity(state, current_dt)
+        return "activity_start", "activity:auto_start", payload
 
     return "none", "no_action_needed", None
 
@@ -433,15 +670,7 @@ def run_tick(state_path, now_dt=None):
 
     recent_interaction = _is_recent_interaction(state, current_dt)
     for _ in range(tick_count):
-        state["pet"]["hunger"] += 4
-        state["pet"]["boredom"] += 3
-        if recent_interaction:
-            state["pet"]["boredom"] -= 2
-        if state["pet"]["hunger"] >= 80:
-            state["pet"]["happiness"] -= 3
-        if state["pet"]["boredom"] >= 75:
-            state["pet"]["happiness"] -= 2
-        clamp_pet(state)
+        _apply_pet_tick_step(state, recent_interaction)
 
     candidate, reason, action_payload = choose_action_candidate(state, current_dt)
 
@@ -463,8 +692,15 @@ def run_tick(state_path, now_dt=None):
     }
     if candidate == "task_reminder" and action_payload is not None:
         out["task_hint"] = action_payload.get("title")
-    if candidate == "cat_activity" and action_payload is not None:
+    if (
+        candidate in ("activity_start", "activity_progress", "activity_end")
+        and action_payload is not None
+    ):
+        out["activity_kind"] = action_payload.get("activity_kind")
+        out["activity_intensity_level"] = action_payload.get("activity_intensity_level")
         out["activity_hint"] = action_payload.get("activity_hint")
+        if candidate == "activity_end":
+            out["activity_end_reason"] = action_payload.get("activity_end_reason")
     return out
 
 
@@ -605,9 +841,25 @@ def _normalize_preference_key(key):
     return key if key in allowed else None
 
 
+def _normalize_activity_plan(activity_obj, now_iso):
+    if not isinstance(activity_obj, dict):
+        raise ValueError("activity_plan_upsert.activity must be an object")
+    kind = _normalize_activity_kind(activity_obj.get("kind"))
+    intensity_level = _normalize_activity_intensity(activity_obj.get("intensity_level"))
+    duration_minutes = _normalize_activity_duration(
+        activity_obj.get("duration_minutes")
+    )
+    return {
+        "kind": kind,
+        "intensity_level": intensity_level,
+        "duration_minutes": duration_minutes,
+        "updated_at": now_iso,
+    }
+
+
 def map_feed_strength(feed_strength):
     strength = clamp(float(feed_strength), 0.0, 1.0)
-    return int(round(8 + 7 * strength))
+    return int(round(15 + 15 * strength))
 
 
 def _hash_message(payload):
@@ -827,6 +1079,11 @@ def apply_ops(state_path, payload, now_dt=None):
                     state["memory"]["user_preferences"][key] = str(raw_value)[:60]
             applied_count += 1
 
+        elif op_type == "activity_plan_upsert":
+            plan = _normalize_activity_plan(op.get("activity"), now_iso)
+            state["activity"]["plan"] = plan
+            applied_count += 1
+
         else:
             raise ValueError(f"unsupported op type: {op_type}")
 
@@ -859,6 +1116,13 @@ def build_summary(state_path):
         "candidate": state["meta"].get("last_action_candidate", "none"),
         "task_hint": latest_task,
         "mood_hint": latest_mood,
+        "activity": {
+            "phase": state["activity"].get("phase", "idle"),
+            "kind": state["activity"].get("kind"),
+            "intensity_level": state["activity"].get("intensity_level", "mid"),
+            "ends_at": state["activity"].get("ends_at"),
+            "cooldown_until": state["activity"].get("cooldown_until"),
+        },
         "memory": {
             "task_related_items": len(state["memory"].get("task_related", [])),
             "non_task_related_items": len(state["memory"].get("non_task_related", [])),
@@ -882,6 +1146,7 @@ def _pet_level(value):
 
 def _public_summary(summary):
     pet = summary.get("pet", {})
+    activity = summary.get("activity", {})
     return {
         "pet_state": {
             "hunger": _pet_level(int(pet.get("hunger", 0))),
@@ -891,6 +1156,10 @@ def _public_summary(summary):
         "candidate": summary.get("candidate", "none"),
         "task_hint": summary.get("task_hint"),
         "mood_hint": summary.get("mood_hint"),
+        "activity": {
+            "phase": activity.get("phase", "idle"),
+            "kind": activity.get("kind"),
+        },
         "memory_state": "stable"
         if summary.get("memory", {}).get("last_sync_at")
         else "idle",
@@ -899,9 +1168,7 @@ def _public_summary(summary):
 
 def _is_debug_cat_request(text):
     content = (text or "").strip()
-    if content.lower().startswith("/cat"):
-        content = content[4:].strip()
-    return re.match(r"^debug(\s|$)", content, re.IGNORECASE) is not None
+    return re.match(r"^/cat\s+debug(\s|$)", content, re.IGNORECASE) is not None
 
 
 def _extract_task_title(text):
@@ -1009,12 +1276,14 @@ def run_cat_command(state_path, text, now_dt=None):
         "ok": True,
         "mode": "cat",
         "intents": mapping["intents"],
-        "apply": apply_result,
         "summary": _public_summary(summary),
         "debug_mode": debug_mode,
     }
     if debug_mode:
+        out["apply"] = apply_result
         out["debug_summary"] = summary
+    else:
+        out["applied"] = bool(apply_result.get("ok", True))
     return out
 
 
@@ -1084,7 +1353,7 @@ def _add_runtime_flags(parser):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="KickCat v1.2 local state script")
+    parser = argparse.ArgumentParser(description="KickCat v1.3 local state script")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for cmd in ("init", "tick", "summary"):

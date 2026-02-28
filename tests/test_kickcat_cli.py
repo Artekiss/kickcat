@@ -85,6 +85,7 @@ class KickCatCliTests(unittest.TestCase):
             self.assertIn("feed", payload["intents"])
             self.assertFalse(payload["debug_mode"])
             self.assertIn("pet_state", payload["summary"])
+            self.assertNotIn("apply", payload)
 
     def test_cli_cat_command_debug_prefix_exposes_debug_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,7 +102,7 @@ class KickCatCliTests(unittest.TestCase):
                     "--state-file",
                     str(state_file),
                     "--text",
-                    "DEBUG show status",
+                    "/cat DEBUG show status",
                 ],
                 text=True,
             )

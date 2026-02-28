@@ -84,7 +84,7 @@ class KickCatUnitTests(unittest.TestCase):
         now = datetime(2026, 2, 28, 10, 30, tzinfo=timezone.utc)
         state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
         state["pet"].update({"hunger": 79, "happiness": 50, "boredom": 74})
-        state["timing"]["last_tick_at"] = iso(now - timedelta(minutes=20))
+        state["timing"]["last_tick_at"] = iso(now - timedelta(minutes=40))
         state["timing"]["last_interaction_at"] = iso(now - timedelta(minutes=30))
         self._write_state(state)
 
@@ -93,7 +93,7 @@ class KickCatUnitTests(unittest.TestCase):
         updated = self._read_state()
         self.assertEqual(
             updated["pet"],
-            {"name": "KickCat", "hunger": 87, "happiness": 40, "boredom": 76},
+            {"name": "KickCat", "hunger": 83, "happiness": 40, "boredom": 76},
         )
 
     def test_tick_prefers_task_reminder(self):
@@ -126,25 +126,52 @@ class KickCatUnitTests(unittest.TestCase):
         out = kickcat.run_tick(self.state_path, now_dt=now)
         self.assertEqual(out["candidate"], "none")
 
-    def test_tick_emits_cat_activity_hint_when_calm(self):
+    def test_tick_emits_activity_start_when_calm(self):
         now = datetime(2026, 2, 28, 12, 0, tzinfo=timezone.utc)
         state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
         state["pet"].update({"hunger": 40, "boredom": 50, "happiness": 70})
         self._write_state(state)
 
         out = kickcat.run_tick(self.state_path, now_dt=now)
-        self.assertEqual(out["candidate"], "cat_activity")
+        self.assertEqual(out["candidate"], "activity_start")
+        self.assertIn("activity_kind", out)
+        self.assertIn("activity_intensity_level", out)
         self.assertIn("activity_hint", out)
 
-    def test_tick_cat_activity_hint_respects_cooldown(self):
+    def test_tick_activity_respects_cooldown_phase(self):
         now = datetime(2026, 2, 28, 12, 0, tzinfo=timezone.utc)
         state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
         state["pet"].update({"hunger": 40, "boredom": 50, "happiness": 70})
-        state["timing"]["last_activity_hint_at"] = iso(now - timedelta(minutes=10))
+        state["activity"]["phase"] = "cooldown"
+        state["activity"]["cooldown_until"] = iso(now + timedelta(minutes=20))
         self._write_state(state)
 
         out = kickcat.run_tick(self.state_path, now_dt=now)
         self.assertEqual(out["candidate"], "none")
+
+    def test_tick_activity_progress_and_end_lifecycle(self):
+        base = datetime(2026, 2, 28, 12, 0, tzinfo=timezone.utc)
+        state = kickcat.deepcopy(kickcat.DEFAULT_STATE)
+        state["pet"].update({"hunger": 40, "boredom": 40, "happiness": 70})
+        state["activity"].update(
+            {
+                "phase": "active",
+                "kind": "play",
+                "intensity_level": "mid",
+                "started_at": iso(base - timedelta(minutes=10)),
+                "ends_at": iso(base + timedelta(minutes=10)),
+                "last_progress_at": iso(base - timedelta(minutes=30)),
+            }
+        )
+        self._write_state(state)
+
+        progress = kickcat.run_tick(self.state_path, now_dt=base)
+        self.assertEqual(progress["candidate"], "activity_progress")
+
+        ended = kickcat.run_tick(self.state_path, now_dt=base + timedelta(minutes=20))
+        self.assertEqual(ended["candidate"], "activity_end")
+        saved = self._read_state()
+        self.assertEqual(saved["activity"]["phase"], "cooldown")
 
     def test_apply_pet_delta_validation_and_clamp(self):
         kickcat.init_state(self.state_path)
@@ -166,7 +193,7 @@ class KickCatUnitTests(unittest.TestCase):
             "ops": [{"type": "pet_delta", "field": "hunger", "feed_strength": 1.0}],
         }
         out1 = kickcat.apply_ops(self.state_path, first, now_dt=base)
-        self.assertEqual(out1["pet"]["hunger"], 20)
+        self.assertEqual(out1["pet"]["hunger"], 5)
 
         second = {
             "message_id": "msg-2",
@@ -185,6 +212,10 @@ class KickCatUnitTests(unittest.TestCase):
             self.state_path, third, now_dt=base + timedelta(minutes=6)
         )
         self.assertEqual(out3["skipped_ops"][0]["reason"], "duplicate_message_feed")
+
+    def test_map_feed_strength_uses_v13_range(self):
+        self.assertEqual(kickcat.map_feed_strength(0.0), 15)
+        self.assertEqual(kickcat.map_feed_strength(1.0), 30)
 
     def test_apply_task_add_autofill_and_time_validation(self):
         now = datetime(2026, 2, 28, 8, 0, tzinfo=timezone.utc)
@@ -261,6 +292,7 @@ class KickCatUnitTests(unittest.TestCase):
         self.assertIn("candidate", summary)
         self.assertIn("task_hint", summary)
         self.assertIn("mood_hint", summary)
+        self.assertIn("activity", summary)
         self.assertIn("memory", summary)
 
     def test_resolve_mode_from_env(self):
@@ -406,6 +438,30 @@ class KickCatUnitTests(unittest.TestCase):
         self.assertEqual(state["memory"]["user_preferences"]["reply_tone"], "gentle")
         self.assertNotIn("unknown_field", state["memory"]["user_preferences"])
 
+    def test_activity_plan_upsert_clamps_and_updates(self):
+        now = datetime(2026, 3, 1, 12, 5, tzinfo=timezone.utc)
+        kickcat.init_state(self.state_path)
+        payload = {
+            "ops": [
+                {
+                    "type": "activity_plan_upsert",
+                    "activity": {
+                        "kind": "explore",
+                        "intensity_level": "high",
+                        "duration_minutes": 999,
+                    },
+                }
+            ]
+        }
+        kickcat.apply_ops(self.state_path, payload, now_dt=now)
+        state = self._read_state()
+        plan = state["activity"]["plan"]
+        self.assertEqual(plan["kind"], "explore")
+        self.assertEqual(plan["intensity_level"], "high")
+        self.assertEqual(
+            plan["duration_minutes"], kickcat.ACTIVITY_MAX_DURATION_MINUTES
+        )
+
     def test_cat_command_generates_interaction(self):
         now = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
         kickcat.init_state(self.state_path)
@@ -429,12 +485,14 @@ class KickCatUnitTests(unittest.TestCase):
         self.assertFalse(out["debug_mode"])
         self.assertIn("pet_state", out["summary"])
         self.assertNotIn("pet", out["summary"])
+        self.assertNotIn("apply", out)
+        self.assertTrue(out["applied"])
         self.assertNotIn("debug_summary", out)
 
     def test_cat_command_exposes_debug_summary_for_debug_prefix(self):
         now = datetime(2026, 3, 1, 10, 10, tzinfo=timezone.utc)
         kickcat.init_state(self.state_path)
-        out = kickcat.run_cat_command(self.state_path, "DEBUG status", now_dt=now)
+        out = kickcat.run_cat_command(self.state_path, "/cat DEBUG status", now_dt=now)
         self.assertTrue(out["debug_mode"])
         self.assertIn("debug_summary", out)
         self.assertIn("pet", out["debug_summary"])

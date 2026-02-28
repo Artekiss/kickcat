@@ -1,4 +1,4 @@
-# KickCat v1.2
+# KickCat v1.3
 
 KickCat is a minimal virtual pet reminder skill for OpenClaw.
 
@@ -7,12 +7,19 @@ It keeps one tight loop:
 - maintain pet state (`hunger`, `happiness`, `boredom`)
 - update state on heartbeat tick
 - apply all state changes through one reducer (`apply`)
+- manage activity lifecycle (`idle -> active -> cooldown`)
 - request memory sync/compact actions for LLM, without mutating main agent memory
 
 Version semantics:
 
-- product/release version: `v1.2`
+- product/release version: `v1.3`
 - state schema version in runtime state: `version = 2` (schema migration marker)
+
+v1.3 tuning highlights:
+
+- heartbeat cadence baseline: `20m`
+- hunger drift baseline: `+2` per tick (before activity factor)
+- feed effect range: `-15..-30` via `feed_strength`
 
 ## Project layout
 
@@ -82,7 +89,17 @@ Memory limits (UTF-8 bytes):
 
 - strict debug gating: only explicit `/cat DEBUG ...` may include numeric status/debug details
 - default `/cat` replies stay non-numeric and user-facing
-- `tick` may emit `candidate=cat_activity` with `activity_hint` when no task/urgent reminder is due
+- task reminders always win over leisure activity output
+
+## Activity lifecycle (minimal)
+
+- activity phase is explicit in state: `idle`, `active`, `cooldown`
+- `tick` may emit `activity_start`, `activity_progress`, or `activity_end`
+- activity drift speed uses discrete levels only: `low`, `mid`, `high`
+- LLM can suggest next activity via reducer op `activity_plan_upsert` with:
+  - `kind` (`play|hunt|social|rest|groom|water|litter|explore`)
+  - `intensity_level` (`low|mid|high`)
+  - `duration_minutes` (clamped to `10..60`)
 
 ## Lightweight learning
 

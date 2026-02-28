@@ -1,10 +1,10 @@
 # KickCat Heartbeat
 
-1. 执行：`python3 skills/kickcat/kickcat.py tick`
+1. 每 20 分钟执行：`python3 skills/kickcat/kickcat.py tick`
 2. 执行：`python3 skills/kickcat/kickcat.py summary`
 3. 若 `candidate` 为 `none`，返回 `HEARTBEAT_OK`
 4. 若 `candidate` 非 `none`，只输出一条简短消息
-5. 若 `candidate` 为 `cat_activity` 且无任务/强提醒，输出 `activity_hint` 对应的猫咪日常活动短句
+5. 若 `candidate` 为 `activity_start/activity_progress/activity_end`，优先使用 `tick` 返回的 `activity_hint` 输出猫咪活动短句
 6. 30 分钟内避免重复同类提醒
 7. 若检测到用户低落，优先温和语气
 8. 线上默认 `deploy` 模式，排障时改 `debug` 模式

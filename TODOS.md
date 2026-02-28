@@ -1,6 +1,6 @@
-# KickCat v1.2 TODOs
+# KickCat v1.3 TODOs
 
-> 注：本文档包含 v1 到 v1.2+ 的历史里程碑；代码中的 `version` 字段指状态 schema 版本。
+> 注：本文档包含 v1 到 v1.3+ 的历史里程碑；代码中的 `version` 字段指状态 schema 版本。
 
 > 目标：先打通最小可运行闭环，再补齐测试与交付说明。
 
@@ -86,3 +86,29 @@
 8. [x] 更新文档（README/SKILL/HEARTBEAT）说明新约束与流程
 9. [x] 新增与更新测试，覆盖分桶限额、学习机制、持久化行为
 10. [x] 运行增量与全量测试，全部通过
+
+## 迭代五：v1.2 极简化重构（生命周期 + 离散强度）
+
+1. [x] 收敛活动状态模型为最小生命周期（`idle/active/cooldown`）并保证旧状态兼容
+2. [x] 将 tick 漂移逻辑改为可复用内核函数，并引入活动离散强度对漂移速度的受控影响
+3. [x] 将自由活动候选改为显式生命周期事件（`activity_start/activity_progress/activity_end`）且任务提醒优先
+4. [x] 新增 `activity_plan_upsert` reducer，允许 LLM 以白名单活动类型 + 离散强度建议后续活动
+5. [x] 同步更新 `summary` 与 `/cat` 输出，保持非 DEBUG 下不泄露数值细节
+6. [x] 更新文档契约（`SKILL.md`、`README.md`、`HEARTBEAT.md`）以匹配极简化架构
+7. [x] 新增/调整单元与 CLI 测试并跑全量，确保全绿
+
+## 迭代六：v2.0 子能力库与受控学习激活（规划）
+
+1. [ ] 新能力学习默认先进入 `pending`，仅做 shadow 命中统计，不直接生效
+2. [ ] 定义并落地 `learning -> hit -> validate` 三段判定与结构化日志字段
+3. [ ] 增加 `pending -> active` 激活阈值（命中次数、成功率、时间窗）
+4. [ ] 增加 `active -> pending` 自动降级（连续失败/窗口失败率超阈值）
+5. [ ] 将能力模板与运行态拆分为 `./data` 下模板文件 + runtime 文件（runtime gitignore）
+
+## 迭代七：v1.3 稳定性与交互负担调优
+
+1. [x] 心跳步长调整为 20 分钟（`TICK_MINUTES = 20`）
+2. [x] 饥饿自然漂移调整为每 tick `+2`（保持活动强度系数）
+3. [x] 投喂效果调整为 `-15..-30`（由 `feed_strength` 映射）
+4. [x] 更新契约文档（`README.md`、`SKILL.md`、`HEARTBEAT.md`）与版本标识至 v1.3
+5. [x] 更新并补充单元测试后跑全量测试，确保全绿

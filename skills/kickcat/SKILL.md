@@ -42,6 +42,11 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
     "valence": -0.6,
     "intensity": 0.7
   },
+  "activity_suggestion": {
+    "kind": "play",
+    "intensity_level": "mid",
+    "duration_minutes": 20
+  },
   "reply_style": "gentle"
 }
 ```
@@ -52,10 +57,18 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 
 - `interaction_quality` -> `pet_delta(happiness, +1~+4)`
 - `boredom_relief` -> `pet_delta(boredom, -1~-6)`
-- `feed_strength` -> `pet_delta(hunger, feed_strength=0.0~1.0)`（脚本映射为 `-8~-15`）
+- `feed_strength` -> `pet_delta(hunger, feed_strength=0.0~1.0)`（脚本映射为 `-15~-30`）
 - `task_candidates[]` -> `task_add`
 - `mood_candidate` -> `mood_add`
+- `activity_suggestion` -> `activity_plan_upsert`（白名单 kind + 离散强度 `low|mid|high`）
 - 只要发生有效对话 -> `touch_interaction`
+
+## 活动生命周期（极简）
+
+- 内核只维护三态：`idle -> active -> cooldown`
+- heartbeat 可看到显式事件：`activity_start`、`activity_progress`、`activity_end`
+- 强提醒（任务到期/高饥饿高无聊）优先，必要时中断活动
+- 活动强度仅允许离散档位 `low|mid|high`，由脚本做边界约束
 
 ## apply 调用顺序
 
@@ -66,7 +79,7 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 
 ## OpenClaw 调用建议（社区实践）
 
-- Heartbeat 配置建议：`every: "10m"`，内测期 `target: "none"`，稳定后切到 `target: "last"`
+- Heartbeat 配置建议：`every: "20m"`，内测期 `target: "none"`，稳定后切到 `target: "last"`
 - 心跳主流程：`tick -> summary -> HEARTBEAT_OK/单条短消息`
 - `/cat` 路由建议：收到 `/cat <自然语言输入>` 后，先做意图结构化解析，再映射 reducer ops 并调用 `apply`
 - 脚本运行模式：
@@ -111,4 +124,4 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 - 用户低落时改用温和语气，减少打扰
 - 严格调试门控：仅当用户输入明确为 `/cat DEBUG ...`（不区分大小写）时，允许输出具体状态数值或调试信息
 - 若未命中 `/cat DEBUG ...`，禁止输出 `hunger/happiness/boredom` 数值、memory bytes、ops 计数、阈值、内部 reason code、trace/debug 字段
-- 非紧急状态下可输出一条猫咪自由活动提示（如玩毛线球、喝水、找朋友玩、找食物），但当存在任务提醒或强提醒时必须让位
+- 非紧急状态下可输出一条猫咪活动提示，但当存在任务提醒或强提醒时必须让位

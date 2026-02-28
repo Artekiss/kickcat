@@ -19,6 +19,21 @@
     "last_action_reason": null,
     "last_message_hash": null
   },
+  "activity": {
+    "phase": "idle",
+    "kind": null,
+    "intensity_level": "mid",
+    "started_at": null,
+    "ends_at": null,
+    "cooldown_until": null,
+    "last_progress_at": null,
+    "plan": {
+      "kind": "play",
+      "intensity_level": "mid",
+      "duration_minutes": 20,
+      "updated_at": null
+    }
+  },
   "memory": {
     "task_related": [],
     "non_task_related": [],
