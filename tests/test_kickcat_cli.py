@@ -51,6 +51,7 @@ class KickCatCliTests(unittest.TestCase):
             )
             tick_json = json.loads(tick_out)
             self.assertTrue(tick_json["ok"])
+            self.assertIn("memory_action", tick_json)
 
             summary_out = subprocess.check_output(
                 ["python3", str(SCRIPT), "summary", "--state-file", str(state_file)],
@@ -58,6 +59,30 @@ class KickCatCliTests(unittest.TestCase):
             )
             summary_json = json.loads(summary_out)
             self.assertIn("pet", summary_json)
+
+    def test_cli_cat_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "kickcat.json"
+            subprocess.check_output(
+                ["python3", str(SCRIPT), "init", "--state-file", str(state_file)],
+                text=True,
+            )
+            out = subprocess.check_output(
+                [
+                    "python3",
+                    str(SCRIPT),
+                    "cat",
+                    "--state-file",
+                    str(state_file),
+                    "--text",
+                    "feed cat and remind me to write report",
+                ],
+                text=True,
+            )
+            payload = json.loads(out)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["mode"], "cat")
+            self.assertIn("feed", payload["intents"])
 
     def test_cli_debug_mode_returns_json_on_error_and_writes_log(self):
         with tempfile.TemporaryDirectory() as tmp:

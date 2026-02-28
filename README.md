@@ -1,73 +1,41 @@
-# KickCat v1
+# KickCat v1.1
 
 KickCat is a minimal virtual pet reminder skill for OpenClaw.
 
-It focuses on one closed loop only:
+It keeps one tight loop:
 
-- keep pet state (`hunger`, `happiness`, `boredom`)
-- advance state on heartbeat ticks
-- apply chat/feed/task/mood updates through a single reducer
-- decide whether to remind, ping, or stay silent (`HEARTBEAT_OK`)
+- maintain pet state (`hunger`, `happiness`, `boredom`)
+- update state on heartbeat tick
+- apply all state changes through one reducer (`apply`)
+- request memory sync/compact actions for LLM, without mutating main agent memory
+
+Version semantics:
+
+- product/release version: `v1.1`
+- state schema version in `kickcat.json`: `version = 2` (schema migration marker)
 
 ## Project layout
 
-- `skills/kickcat/kickcat.py`: local state script (`init`, `tick`, `apply`, `summary`)
-- `skills/kickcat/SKILL.md`: skill contract and reducer mapping
-- `data/kickcat.json`: single source of truth for state
-- `HEARTBEAT.md`: tiny heartbeat workflow checklist
-- `tests/`: unit and CLI integration tests
+- `skills/kickcat/kickcat.py`: local script (`init`, `tick`, `apply`, `summary`, `cat`)
+- `skills/kickcat/SKILL.md`: skill contract and routing guidance
+- `data/kickcat.json`: only state source for KickCat
+- `HEARTBEAT.md`: tiny heartbeat checklist
+- `tests/`: unit and CLI tests
 
-## State model
-
-`data/kickcat.json` stores:
-
-- `version`
-- `pet` (`name`, `hunger`, `happiness`, `boredom`)
-- `timing` (`last_tick_at`, `last_feed_at`, `last_interaction_at`, `last_random_ping_at`)
-- `tasks` (light reminder objects)
-- `moods` (minimal mood entries)
-- `meta` (`last_action_candidate`, `last_action_reason`, `last_message_hash`)
-
-Rules:
-
-- pet numeric fields are always clamped to `0..100`
-- timestamps use ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SSZ`)
-- all mutations go through reducer ops in `apply`
-
-## CLI usage
-
-Initialize state (idempotent):
+## Core commands
 
 ```bash
 python3 skills/kickcat/kickcat.py init
-```
-
-Apply reducer ops:
-
-```bash
-python3 skills/kickcat/kickcat.py apply --payload '{"ops":[{"type":"touch_interaction"}]}'
-```
-
-Heartbeat tick:
-
-```bash
 python3 skills/kickcat/kickcat.py tick
-```
-
-Read compact summary:
-
-```bash
 python3 skills/kickcat/kickcat.py summary
+python3 skills/kickcat/kickcat.py cat --text "feed cat and remind me to write report"
+python3 skills/kickcat/kickcat.py apply --payload '{"ops":[{"type":"touch_interaction"}]}'
 ```
 
 ## Deploy and debug modes
 
-The script supports runtime mode controls:
-
-- `--mode deploy` (default): stable minimal error payload, non-zero exit on failure
-- `--mode debug`: crash-safe JSON output with fallback and debug log writing
-
-Optional debug log path:
+- `--mode deploy` (default): stable minimal error payload
+- `--mode debug`: crash-safe JSON output + debug log
 
 ```bash
 python3 skills/kickcat/kickcat.py summary --mode debug --debug-log-file logs/kickcat-debug.jsonl
@@ -78,45 +46,49 @@ Environment overrides:
 - `KICKCAT_MODE`
 - `KICKCAT_DEBUG_LOG_FILE`
 
-## OpenClaw heartbeat recommendation
+## LLM-driven memory workflow
 
-Start internal testing with:
+KickCat does **not** read or modify OpenClaw main memory directly.
 
-- `every: "10m"`
-- `target: "none"`
+- `tick` emits `memory_action`:
+  - `request_memory_sync` (every 3 hours)
+  - `request_memory_compact` (daily after 03:00 local or when memory total reaches 32KB)
+- OpenClaw/LLM performs semantic sync/compact externally, then writes back via `apply`.
 
-After stable validation, switch to:
+Reducer ops for this flow:
 
-- `target: "last"`
+- `memory_sync_upsert` with:
+  - `task_related_items`
+  - `non_task_related_items`
+  - optional `cursor` (`updated_at + id`)
+- `memory_compact_replace` with:
+  - `task_related_items`
+  - `non_task_related_items`
 
-Heartbeat flow remains: `tick -> summary -> HEARTBEAT_OK or one short message`.
+Memory limits (UTF-8 bytes):
+
+- task-related bucket: `<= 8KB`
+- non-task bucket: `<= 4KB`
+- total compact trigger threshold: `>= 32KB`
+
+## Lightweight learning
+
+KickCat supports small preference evolution through `preference_upsert`.
+
+- whitelist fields only (`reply_tone`, `interaction_style`, `quiet_hours`, `reminder_density`, `preferred_name`)
+- no heavy profile system
+- keeps behavior adaptive without over-engineering
+
+## Persistence guarantee
+
+- Skills code updates must not clear KickCat local memory/state.
+- `init` is idempotent and only fills missing schema fields.
 
 ## Testing
-
-Run all tests:
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
-
-Current suite covers:
-
-- command behavior (`init`, `tick`, `apply`, `summary`)
-- reducer validation and safeguards
-- feed cooldown and duplicate-message protection
-- task/mood auto-fill and validation
-- deploy/debug mode error handling and debug log fallback
-
-## v1 scope boundaries
-
-This v1 intentionally does not include:
-
-- database or external services
-- vector memory
-- workflow orchestrators or web APIs
-- complex task lifecycle systems
-
-It is a small, local, testable loop by design.
 
 ## License
 

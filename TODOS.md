@@ -1,4 +1,6 @@
-# KickCat v1 TODOs
+# KickCat v1.1 TODOs
+
+> 注：本文档包含 v1 到 v1.1+ 的历史里程碑；代码中的 `version` 字段指状态 schema 版本。
 
 > 目标：先打通最小可运行闭环，再补齐测试与交付说明。
 
@@ -59,3 +61,28 @@
 6. [x] 在 `HEARTBEAT.md` 补充 deploy/debug 行为约束（保持文档极短）
 7. [x] 同步新增单元/集成测试：模式切换、异常兜底、debug 日志落盘
 8. [x] 先跑新增测试，再跑全量测试，确保测试全绿
+
+## 迭代三：KickCat v1.1（/cat + 增量记忆 + 自动 compact）
+
+1. [x] 增加 `/cat` 专项互动入口并映射为 reducer ops
+2. [x] 增加主记忆增量同步请求：3 小时检查一次，由 LLM 执行相关摘要同步
+3. [x] 增加同步游标机制（`updated_at + id`），避免全量回扫
+4. [x] 增加内部记忆 compact 请求：每日 03:00 与 32KB 双触发，由 LLM 语义压缩
+5. [x] 将同步与 compact 请求集成到 `tick`，异常时安全降级
+6. [x] 扩展状态结构与 summary 输出（memory 元信息）
+7. [x] 新增/更新单元与 CLI 测试覆盖 v1.1 行为
+8. [x] 更新文档（`README.md`、`SKILL.md`、`HEARTBEAT.md`）
+9. [x] 运行增量测试与全量测试，确保全部通过
+
+## 迭代四：LLM 语义压缩分桶与轻学习（v1.1+）
+
+1. [x] 将内部记忆拆分为任务相关与非任务相关分桶
+2. [x] 分桶上限按 UTF-8 字节执行：任务 8KB、非任务 4KB
+3. [x] `tick` 输出 memory_action 时附带分桶限额约束
+4. [x] `apply memory_sync_upsert` 支持分桶写入与游标更新
+5. [x] `apply memory_compact_replace` 支持分桶语义压缩回写
+6. [x] 新增 `preference_upsert`，实现轻量偏好学习（白名单）
+7. [x] 确保 `init`/仓库更新不清零本地内部记忆
+8. [x] 更新文档（README/SKILL/HEARTBEAT）说明新约束与流程
+9. [x] 新增与更新测试，覆盖分桶限额、学习机制、持久化行为
+10. [x] 运行增量与全量测试，全部通过

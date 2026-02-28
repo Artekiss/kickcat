@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "pet": {
     "name": "KickCat",
     "hunger": 35,
@@ -18,5 +18,22 @@
     "last_action_candidate": "none",
     "last_action_reason": null,
     "last_message_hash": null
+  },
+  "memory": {
+    "task_related": [],
+    "non_task_related": [],
+    "user_preferences": {},
+    "last_sync_at": null,
+    "last_sync_cursor": {
+      "updated_at": null,
+      "id": null
+    },
+    "last_compact_at": null,
+    "last_compact_reason": null,
+    "approx_bytes": {
+      "task_related": 0,
+      "non_task_related": 0,
+      "total": 0
+    }
   }
 }

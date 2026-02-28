@@ -13,6 +13,7 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 - 顺手记录提醒事项（task_capture）
 - 表达心情（mood_capture）
 - heartbeat 轮询状态与候选动作
+- 显式命令 `/cat <text>`（强制进入 KickCat 专项互动）
 
 ## 结构化解析规范
 
@@ -62,12 +63,40 @@ KickCat 是轻量电子宠物提醒 Skill：维护宠物状态、接受闲聊/�
 
 - Heartbeat 配置建议：`every: "10m"`，内测期 `target: "none"`，稳定后切到 `target: "last"`
 - 心跳主流程：`tick -> summary -> HEARTBEAT_OK/单条短消息`
+- `/cat` 路由建议：收到 `/cat <text>` 时直接调用 `kickcat.py cat --text "..."`
 - 脚本运行模式：
   - `deploy`（默认）：面向生产，错误输出最小化
   - `debug`：即使异常也保底输出 JSON，并写入 debug 日志
 - 示例命令：
   - `python3 skills/kickcat/kickcat.py tick --mode deploy`
   - `python3 skills/kickcat/kickcat.py apply --payload ... --mode debug --debug-log-file logs/kickcat-debug.jsonl`
+  - `python3 skills/kickcat/kickcat.py cat --text "feed cat and remind me to finish report"`
+
+## 主记忆同步（v1.1）
+
+- 每 3 小时由 tick 产生 `request_memory_sync` 候选
+- KickCat 脚本不直接读取或规范化主记忆
+- 由 OpenClaw/LLM 执行增量语义同步，再调用 `apply` 写入 `memory_sync_upsert`
+- 无关内容由 LLM 判断并跳过，同步游标建议使用 `updated_at + id`
+- 同步写入分桶：`task_related_items` 与 `non_task_related_items`
+
+## 内部记忆 compact（v1.1）
+
+- 当地时间每日 03:00 后，或内部记忆达到 32KB 时，tick 产生 `request_memory_compact`
+- 由 LLM 返回语义压缩结果，再调用 `apply` 的 `memory_compact_replace`
+- 大小上限（UTF-8 字节）：`task_related <= 8KB`，`non_task_related <= 4KB`
+- KickCat 仅做结构校验、大小约束与落盘
+
+## 轻学习机制（v1.1+）
+
+- 允许 LLM 通过 `preference_upsert` 更新轻量偏好（如语气、互动密度）
+- 仅白名单字段可写入，避免过度预定义和无边界膨胀
+- 用于逐步贴合用户，不做复杂画像系统
+
+## 持久化与部署约束
+
+- Skills 代码更新不应清零 KickCat 本地内部记忆
+- `init` 仅补齐 schema，不覆盖已有状态
 
 ## 回复风格限制
 
